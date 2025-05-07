@@ -1,5 +1,4 @@
 ﻿using PhrasePulse.Logic.Configuration;
-using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -7,166 +6,170 @@ namespace PhrasePulse.Logic;
 
 internal class Pulse
 {
-    public string? PhraseColored { get; private set; } = null;
+    public string Phrase { get; }
+    private readonly PulseSearchConfiguration _config;
+    private readonly AppConfig _appConfig;
+    public List<(int Start, int End)> Indexes { get; private set; } = [];
 
-    public readonly string Phrase;
-    public readonly Encoding Encoding;
-    public readonly PulseOptionsManager Options;
-    public readonly RegexOptions RegexOptions;
-    public readonly AppConfig Config;
-    private List<(int, int)> Indexes = [];
+    // Configuración de colores
+    private string BorderColor => _config.NoColor 
+        ? string.Empty
+        : _appConfig.Colors.BorderColors.ToString();
+    private string FoundColor => _config.NoColor
+        ? string.Empty
+        : _appConfig.Colors.FoundColors.ToString();
+    private string TextColor => _config.NoColor
+        ? string.Empty
+        : _appConfig.Colors.TextColors.ToString();
+    private string DefaultColor => _config.NoColor
+        ? string.Empty
+        : ConsoleColors.Reset;
 
-    public Pulse(
-        string phrase,
-        PulseOptions options = PulseOptions.Default,
-        Encoding? encoding = null,
-        AppConfig? config = null,
-        RegexOptions regexOptions = RegexOptions.None)
+
+    public string HighlightedPhrase
     {
-        ArgumentException.ThrowIfNullOrEmpty(phrase, nameof(phrase));
+        get
+        {
+            StringBuilder result = new(Phrase);
+            var sortedIndexes = Indexes.OrderBy(t => t.Start).ToList();
+            int offset = 0;
 
-        Phrase = phrase;
-        Encoding = encoding ?? Encoding.UTF8;
-        Config = config ?? AppConfig.Default;
-        Options = options == PulseOptions.Default
-            ? PulseOptionsManager.Default
-            : new(options);
-        RegexOptions = (Options.IgnoreCase ? RegexOptions.IgnoreCase : RegexOptions.None) | regexOptions;
+            for (int i = 0; i < sortedIndexes.Count; i++)
+            {
+                var (_start, _end) = sortedIndexes[i];
+                int start = _start + offset;
+                int end = _end + offset;
+
+                // Determinar si el cierre está dentro de otro rango
+                bool isInside = false;
+                for (int j = i + 1; j < sortedIndexes.Count; j++)
+                {
+                    if (_end > sortedIndexes[j].Start)
+                    {
+                        isInside = true;
+                        break;
+                    }
+                }
+
+                // Insertar marcador de fin primero
+                string atEnd = isInside
+                    ? $"{BorderColor}»{FoundColor}"
+                    : $"{BorderColor}»{TextColor}";
+
+                result.Insert(end, atEnd);
+
+                // Insertar marcador de inicio
+                string atBeginning = $"{BorderColor}«{FoundColor}";
+                result.Insert(start, atBeginning);
+
+                // Actualizar offset
+                offset += atBeginning.Length + atEnd.Length;
+            }
+
+            return StandardColoredOutput(result.ToString());
+        }
     }
-    public static Pulse FromFile(
-        string path,
-        PulseOptions options = PulseOptions.Default,
-        Encoding? encoding = null,
-        AppConfig? config = null,
-        RegexOptions regexOptions = RegexOptions.None)
+    public string HighlightedIndexes
     {
-        try
+        get
         {
-            var phrase = File.ReadAllText(path, encoding ?? Encoding.UTF8);
-            return new(phrase, options, encoding ?? Encoding.UTF8, config, regexOptions);
-        }
-        catch (Exception ex)
-        {
-            throw new PhrasePulseException(
-                "An error occurred while trying to read the file: " + ex.Message,
-                ex.InnerException ?? ex
-            );
+            StringBuilder sb = new();
+            if (Indexes.Count == 0)
+            {
+                sb.AppendLine("No matches found.");
+                return sb.ToString();
+            }
+            sb.AppendLine(Environment.NewLine + "Matches:");
+            for (int i = 0; i < Indexes.Count; i++)
+            {
+                sb.Append($"{BorderColor}[");
+                sb.Append($"{FoundColor}{i + 1}");
+                sb.Append($"{BorderColor}]");
+                sb.Append($"{TextColor} From ");
+                sb.Append($"{FoundColor}{Indexes[i].Start}");
+                sb.Append($"{TextColor} To ");
+                sb.Append($"{FoundColor}{Indexes[i].End}");
+            }
+
+            return StandardColoredOutput(sb.ToString());
         }
     }
 
-    public bool Start([StringSyntax("Regex", "Options")] string reque)
+    public Pulse(PulseSearchConfiguration config, AppConfig? appConfig = null)
     {
-        ColorPair colorDef = (Console.ForegroundColor, Console.BackgroundColor);
+        _config = config ?? throw new ArgumentNullException(nameof(config));
+        _appConfig = appConfig ?? AppConfig.Default;
 
-        if (Options.UseRegex)
+        if (config.InputText is not null)
         {
-            // Implementación con regex
-            try
-            {
-                var regex = new Regex(
-                    reque,
-                    RegexOptions,
-                    TimeSpan.FromSeconds(Options.MatchTimeout)
-                );
-
-                Indexes = [.. regex.Matches(Phrase)
-                                   .Select(m => (m.Index, m.Index + m.Length))];
-            }
-            catch (RegexMatchTimeoutException)
-            {
-                throw new PhrasePulseException($"Regex matching timed out after {Options.MatchTimeout} seconds");
-            }
-            catch (ArgumentException ex)
-            {
-                throw new PhrasePulseException($"Invalid regex pattern: {ex.Message}");
-            }
+            Phrase = config.InputText;
         }
-        else Indexes = FindIndexes(reque);
+        else if (config.InputFile is not null)
+        {
+            if (!config.InputFile.Exists)
+                throw new FileNotFoundException("Input file not found", config.InputFile.FullName);
 
-        PhraseColored = $"{Config.Colors.TextColors}{SetColors()}{colorDef}";
+            Phrase = File.ReadAllText(config.InputFile.FullName, config.Encoding);
+        }
+        else throw new ArgumentException("Input text or file must be provided");
+    }
+
+    public bool FindMatches()
+    {
+        if (_config.UseRegex) FindMatchesRegex();
+        else FindMatchesSimple();
+
         return Indexes.Count > 0;
     }
-
-    private List<(int, int)> FindIndexes(string reque)
+    private void FindMatchesSimple()
     {
         List<(int, int)> indexes = [];
-        if (Options.AllowOverlapping)
+        if (_config.AllowOverlapping)
         {
-            for (int i = 0; i <= Phrase.Length - reque.Length; i++)
+            for (int i = 0; i <= Phrase.Length - _config.SearchPattern.Length; i++)
             {
-                if (Phrase.Substring(i, reque.Length).Equals(reque, Options.IgnoreCase ? StringComparison.CurrentCultureIgnoreCase : StringComparison.CurrentCulture))
+                if (Phrase.Substring(i, _config.SearchPattern.Length).Equals(_config.SearchPattern, _config.IgnoreCase ? StringComparison.CurrentCultureIgnoreCase : StringComparison.CurrentCulture))
                 {
-                    indexes.Add(new(i, i + reque.Length));
+                    indexes.Add(new(i, i + _config.SearchPattern.Length));
                 }
             }
         }
         else
         {
-            var matches = Regex.Matches(Phrase, Regex.Escape(reque), Options.IgnoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
+            var matches = Regex.Matches(Phrase, Regex.Escape(_config.SearchPattern), _config.IgnoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
             foreach (Match match in matches)
             {
-                indexes.Add(new(match.Index, match.Index + reque.Length));
+                indexes.Add(new(match.Index, match.Index + _config.SearchPattern.Length));
             }
         }
 
-        return indexes;
+        Indexes = indexes;
     }
-
-    private string SetColors()
+    private void FindMatchesRegex()
     {
-        StringBuilder result = new(Phrase);
-        var sortedIndexes = Indexes.OrderBy(t => t.Item1).ToList();
-        int offset = 0;
-
-        for (int i = 0; i < sortedIndexes.Count; i++)
+        // Implementación con regex
+        try
         {
-            var current = sortedIndexes[i];
-            int start = current.Item1 + offset;
-            int end = current.Item2 + offset;
+            var regex = new Regex(
+                _config.SearchPattern,
+                _config.RegexOptions,
+                TimeSpan.FromSeconds(_config.MatchTimeoutSeconds)
+            );
 
-            // Determinar si el cierre está dentro de otro rango
-            bool isInsideAnotherRange = false;
-            for (int j = i + 1; j < sortedIndexes.Count; j++)
-            {
-                if (current.Item2 > sortedIndexes[j].Item1)
-                {
-                    isInsideAnotherRange = true;
-                    break;
-                }
-            }
-
-            // Insertar marcador de fin primero
-            string atEnd = isInsideAnotherRange
-                ? $"{Config.Colors.BorderColors}»{Config.Colors.FoundColors}"
-                : $"{Config.Colors.BorderColors}»{Config.Colors.TextColors}";
-
-            result.Insert(end, atEnd);
-
-            // Insertar marcador de inicio
-            string atBeginning = $"{Config.Colors.BorderColors}«{Config.Colors.FoundColors}";
-            result.Insert(start, atBeginning);
-
-            // Actualizar offset
-            offset += atBeginning.Length + atEnd.Length;
+            Indexes = [.. regex.Matches(Phrase)
+                                   .Select(m => (m.Index, m.Index + m.Length))];
         }
-
-        return result.ToString();
+        catch (RegexMatchTimeoutException)
+        {
+            throw new PhrasePulseException($"Regex matching timed out after {_config.MatchTimeoutSeconds} seconds");
+        }
+        catch (ArgumentException ex)
+        {
+            throw new PhrasePulseException($"Invalid regex pattern: {ex.Message}");
+        }
     }
-
-    public string IndexesToString()
+    private string StandardColoredOutput(string str)
     {
-        StringBuilder sb = new();
-        if (Indexes.Count == 0)
-        {
-            sb.AppendLine("No coincidences found.");
-            return sb.ToString();
-        }
-        sb.AppendLine(Environment.NewLine + "Coincidences:");
-        for (int i = 0; i < Indexes.Count; i++)
-        {
-            sb.AppendLine($"[{i+1}] from {Indexes[i].Item1} to {Indexes[i].Item2}");
-        }
-
-        return sb.ToString();
+        return $"{TextColor}{str}{DefaultColor}";
     }
 }

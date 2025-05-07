@@ -6,7 +6,7 @@ using System.Diagnostics.CodeAnalysis;
 namespace PhrasePulse.Logic.Configuration;
 
 
-public struct ColorPair
+public partial struct ColorPair
 {
     public ConsoleColor Fore { get; set; }
     public ConsoleColor Back { get; set; }
@@ -104,6 +104,9 @@ public struct ConsoleColors
     public ColorPair TextColors { get; set; }
     public ColorPair FoundColors { get; set; }
     public ColorPair BorderColors { get; set; }
+    public static readonly string ResetFore = Utils.DefaultForeColor;
+    public static readonly string ResetBack = Utils.DefaultBackColor;
+    public static readonly string Reset = Utils.DefaultColor;
 
     public ConsoleColors(
         ConsoleColor tFore,
@@ -133,28 +136,44 @@ public struct ConsoleColors
         new(pairs.text, pairs.found, pairs.border);
 }
 
-internal class AppConfig(ConsoleColors colors)
+internal partial class AppConfig(ConsoleColors colors)
 {
     private const string FileName = "config.json";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
-        IncludeFields = true,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        IncludeFields = true
     };
-
     public ConsoleColors Colors = colors;
+
+    // [^0-15] es considerado un color por defecto
     public static AppConfig Default => new(new(
             Console.ForegroundColor == ConsoleColor.White ? ConsoleColor.Gray : ConsoleColor.White,
-            Console.BackgroundColor,
+            (ConsoleColor) 16,
             Console.ForegroundColor == ConsoleColor.Cyan ? ConsoleColor.Yellow : ConsoleColor.Cyan,
-            Console.BackgroundColor,
+            (ConsoleColor) 16,
             Console.ForegroundColor == ConsoleColor.Red ? ConsoleColor.Green : ConsoleColor.Red,
-            Console.BackgroundColor));
+            (ConsoleColor) 16));
 
     public static void Save(AppConfig config)
     {
+        string nl = Environment.NewLine;
+        string colorMapComment = "    // Color map:" + nl +
+        "    // 0: Black        | 8:  DarkGray" + nl +
+        "    // 1: DarkBlue     | 9:  Blue" + nl +
+        "    // 2: DarkGreen    | 10: Green" + nl +
+        "    // 3: DarkCyan     | 11: Cyan" + nl +
+        "    // 4: DarkRed      | 12: Red" + nl +
+        "    // 5: DarkMagenta  | 13: Magenta" + nl +
+        "    // 6: DarkYellow   | 14: Yellow" + nl +
+        "    // 7: Gray         | 15: White" + nl +
+        "    // Any other number is Default" + nl + nl;
+
         string json = JsonSerializer.Serialize(config, JsonOptions);
+        json = json.Replace(
+            $"\"Colors\": {{{nl}    \"TextColors\"",
+            $"\"Colors\": {{{nl}{colorMapComment}    \"TextColors\""
+        );
         File.WriteAllText(FileName, json);
     }
     public static AppConfig Load()
@@ -165,7 +184,15 @@ internal class AppConfig(ConsoleColors colors)
             return Default;
         }
         string json = File.ReadAllText(FileName);
-        return JsonSerializer.Deserialize<AppConfig>(json, JsonOptions) ?? Default;
+        json = StripCommentsRegex().Replace(json, "");
+        json = StripBlockCommentsRegex().Replace(json, "");
+        var config = JsonSerializer.Deserialize<AppConfig>(json, JsonOptions);
+        if (config is null)
+        {
+            Save(Default);
+            return Default;
+        }
+        return config;
     }
     public static void Open()
     {
@@ -179,4 +206,9 @@ internal class AppConfig(ConsoleColors colors)
             WindowStyle = ProcessWindowStyle.Normal
         });
     }
+
+    [GeneratedRegex(@"^\s*//.*$", RegexOptions.Multiline)]
+    private static partial Regex StripCommentsRegex();
+    [GeneratedRegex(@"/\*.*?\*/", RegexOptions.Singleline)]
+    private static partial Regex StripBlockCommentsRegex();
 }

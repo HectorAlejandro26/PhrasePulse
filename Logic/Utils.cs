@@ -1,12 +1,12 @@
-﻿using PhrasePulse.Logic.Configuration;
+﻿using System.CommandLine.Invocation;
 
 namespace PhrasePulse.Logic;
 
 internal static class Utils
 {
-    public static bool TerminalSupportsColor()
+    public static bool TerminalSupportsColor(InvocationContext context)
     {
-        if (Console.IsOutputRedirected) return false;
+        if (context.Console.IsOutputRedirected) return false;
 
         // Para .NET 5+ en Windows
         if (OperatingSystem.IsWindows()) return Environment.OSVersion.Version.Major >= 10;
@@ -15,6 +15,9 @@ internal static class Utils
         var term = Environment.GetEnvironmentVariable("TERM");
         return !string.IsNullOrEmpty(term) && term != "dumb";
     }
+    public static readonly string DefaultForeColor = "\x1b[39m";
+    public static readonly string DefaultBackColor = "\x1b[49m";
+    public static readonly string DefaultColor = "\x1b[0m";
 
     public static string ToForeColor(this ConsoleColor color)
     {
@@ -36,9 +39,10 @@ internal static class Utils
             ConsoleColor.Magenta => "\x1b[95m",
             ConsoleColor.Yellow => "\x1b[93m",
             ConsoleColor.White => "\x1b[97m",
-            _ => "\x1b[39m" // Reset to default
+            _ => DefaultForeColor
         };
     }
+    
     public static string ToBackColor(this ConsoleColor color)
     {
         return color switch
@@ -59,7 +63,7 @@ internal static class Utils
             ConsoleColor.Magenta => "\x1b[105m",
             ConsoleColor.Yellow => "\x1b[103m",
             ConsoleColor.White => "\x1b[107m",
-            _ => "\x1b[49m" // Reset to default
+            _ => DefaultBackColor
         };
     }
 

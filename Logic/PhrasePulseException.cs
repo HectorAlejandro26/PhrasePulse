@@ -2,8 +2,8 @@
 
 internal class PhrasePulseException : Exception
 {
-    public PhrasePulseException(string message)
+    public PhrasePulseException(string? message)
         : base(message) { }
-    public PhrasePulseException(string message, Exception innerException)
+    public PhrasePulseException(string? message, Exception innerException)
         : base(message, innerException) { }
 }

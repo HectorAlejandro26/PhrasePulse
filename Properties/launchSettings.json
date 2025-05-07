@@ -1,0 +1,15 @@
+{
+  "profiles": {
+    "PhrasePulse(texto)": {
+      "commandName": "Project",
+      "commandLineArgs": "[aeiou] -t \"hola adios\" -o UseRegex,CaseInsensitive",
+      "hotReloadEnabled": false,
+      "nativeDebugging": true
+    },
+    "PhrasePulse(archivo)": {
+      "commandName": "Project",
+      "commandLineArgs": "h -f C:\\Users\\alex2\\Desktop\\test.txt",
+      "hotReloadEnabled": false
+    }
+  }
+}
